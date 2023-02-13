@@ -6,17 +6,19 @@
         text
             effectFn
 */
+import track from "./track.js";
+import trigger from "./trigger.js";
 let activeEffect; // 用于存储副作用函数
 let bucket = new WeakMap(); //Weakmap是弱引用 存储对象--key值 会被垃圾回收机制回收
 const data = { ok: true, text: "hello world" };
 const obj = new Proxy(data, {
   get(target, key) {
-    track(target, key);
+    activeEffect, (bucket = track(target, key, activeEffect, bucket));
     return target[key];
   },
   set(target, key, newVal) {
     target[key] = newVal;
-    trigger(target, key);
+    trigger(target, key, bucket);
     return true;
   },
 });
@@ -24,35 +26,6 @@ const obj = new Proxy(data, {
 effect(() => {
   document.body.innerText = obj.ok ? obj.text : "not";
 });
-
-function track(target, key) {
-  if (!activeEffect) return;
-  let despMap = bucket.get(target);
-  if (!despMap) {
-    bucket.set(target, (despMap = new Map()));
-  }
-  let deps = despMap.get(key);
-  if (!deps) {
-    despMap.set(key, (deps = new Set()));
-  }
-  deps.add(activeEffect);
-  activeEffect.deps.push(deps);
-}
-
-function trigger(target, key) {
-  const despMap = bucket.get(target);
-  if (!despMap) return;
-  const effects = despMap.get(key);
-
-  //防止无限循环
-  const effectsToRun = new Set(effects);
-  effectsToRun.forEach((effectFn) => effectFn());
-  //effects && effects.forEach((fn) => fn());
-}
-
-setTimeout(() => {
-  obj.ok = false;
-}, 2000);
 
 //所以我们需要把所有与之关联的依赖集合给删除
 //副作用函数执行完会重新建立联系
@@ -76,3 +49,7 @@ function cleanUp(effectFn) {
   }
   effectFn.deps.length = 0;
 }
+
+setTimeout(() => {
+  obj.ok = false;
+}, 2000);
