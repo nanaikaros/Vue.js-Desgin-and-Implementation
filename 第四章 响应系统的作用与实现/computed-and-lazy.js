@@ -99,8 +99,40 @@ const effectFn = effect(() => obj.bar + obj.foo, {
   // },
 });
 
-const value = effectFn();
-console.log(value);
+// const value = effectFn();
+// console.log(value);
 //obj.foo++; //这一步操作相当于先读取后写入 但读取操作未完成 所以写入会报错
 
-function computed(getter) {}
+function computed(getter) {
+  let value; //存放上次计算的数值
+  let dirty = true; //true代表数值需要重新计算，“脏”
+  const effectFn = effect(getter, {
+    lazy: true,
+    //当修改data里面的数值的时候要进行调度操作，对dirty置于true使得值可以重新计算
+    scheduler() {
+      if (!dirty) {
+        dirty = true;
+        trigger(obj, "value");
+      }
+    },
+  });
+
+  const obj = {
+    get value() {
+      if (dirty) {
+        value = effectFn();
+        dirty = false;
+      }
+      track(obj, "value");
+      return value;
+    },
+  };
+
+  return obj;
+}
+
+const sumRes = computed(() => obj.bar + obj.foo);
+
+console.log(sumRes.value);
+obj.foo++;
+console.log(sumRes.value);
