@@ -1,13 +1,16 @@
 /**
- * 这一节讲的是代理数组的类型该如何实现
+ * 这一节主要讲解的是如何代理集合类型，Set和Map
  */
-/**
- * 这一节主要讲解的是如何正确的触发响应
- */
+
 let activeEffect;
 let effectStack = [];
 let bucket = new WeakMap();
 const ITERATE_KEY = Symbol();
+
+//隐式修改数组长度的声明
+const arr = reactive([]);
+let shouldTrack = true;
+const arrayInstrumentations = {};
 /**--------------------------------------------------------
  * trigger 函数  type表明了传入的是设置值还是新的属性
  */
@@ -26,7 +29,7 @@ function trigger(target, key, type) {
       }
     });
 
-  //   console.log(type, key);
+  console.log(type, key);
   if (type === "ADD" || type === "DELETE") {
     //取得与ITERATE_KEY相关联的副作用函数
     console.log("取得与ITERATE_KEY相关联的副作用函数");
@@ -64,7 +67,7 @@ function trigger(target, key, type) {
  */
 function track(target, key) {
   console.log("track触发");
-  if (!activeEffect) return;
+  if (!activeEffect || !shouldTrack) return;
   let despMap = bucket.get(target);
   if (!despMap) {
     bucket.set(target, (despMap = new Map()));
@@ -107,15 +110,6 @@ function effect(fn, options = {}) {
   return effectFn; //返回副作用函数;
 }
 
-/**
- * 对数组的读取操作
- * 1. 通过索引访问数组元素值 arr[0]
- * 2. 访问数组的长度： arr.length
- * 3. 把数组作为对象，使用for ... in循环遍历
- * 4. 使用for ... of 迭代遍历数组
- * 5. 数组的原型方法
- */
-
 function reactive(obj) {
   return new Proxy(obj, {
     get(target, key, receiver) {
@@ -152,53 +146,89 @@ function reactive(obj) {
     },
   });
 }
-// const arr = reactive(["foo"]);
-//通过数组的索引访问元素
 
-// effect(() => {
-//   console.log(arr[0]);
-// });
-
-// arr[0] = "bar";
-
-//访问数组的长度
-// effect(() => {
-//   console.log(arr.length);
-// });
-
-// arr[1] = "bar";
-// console.log(arr.length);
-
-//把数组作为对象，使用for ... in循环遍历
-// effect(() => {
-//   for (const key in arr) {
-//     console.log(key);
-//   }
-// });
-
-// arr[1] = "bar";
-// arr.length = 0;
-
-//使用for ... of 迭代遍历数组
-const arr = [1, 2, 3, 4, 5];
-arr[Symbol.iterator] = function () {
-  const target = this;
-  const len = target.length;
-  let index = 0;
-
-  return {
-    next() {
-      return {
-        value: index < len ? target[index] : undefined,
-        done: index++ >= len,
-      };
-    },
-  };
-};
 /**
- * 对数组的设置操作
- * 1. 通过索引修改数组元素值 arr[1] = 3
- * 2. 修改数组的长度： arr.length = 0;
- * 3. 数组的栈方法： push/pop/shift/unshift
- * 4. 修改原数组的原型方法： splice/fill/sort
+ * 如何代理Map对象
  */
+const s = new Set([1, 2, 3]);
+
+//新建一个对象，用于存储自定义的方法
+const mutableInstrumentations = {
+  add(key) {
+    //this指向代理对象，通过raw获取原始数据对象
+    const target = this.raw;
+
+    //判断是否给元素以及在Set里面则不需要添加了
+    const hadKey = target.has(key);
+
+    const res = target.add(key);
+    if (!hadKey) {
+      trigger(target, key, "ADD");
+    }
+    return res;
+  },
+  delete(key) {
+    const target = this.raw;
+
+    const hadKey = target.has(key);
+    const res = target.delete(key);
+    if (hadKey) {
+      trigger(target, key, "DELETE");
+    }
+    return res;
+  },
+  forEach(callback, thisArg) {
+    const wrap = (val) => (typeof val === "object" ? reactive(val) : val);
+
+    const target = this.raw;
+
+    track(target, ITERATE_KEY);
+
+    //调用原始target的forEach方法
+    target.forEach((v, k) => {
+      callback.call(thisArg, wrap(v), wrap(k), this);
+    });
+  },
+};
+
+//利用createReactive里封装用于代理Set/Map类型的数据的逻辑
+function createReactive(obj, isShallow = false, isReadonly = false) {
+  return new Proxy(obj, {
+    get(target, key, receiver) {
+      if (key === "raw") return target;
+      if (key === "size") {
+        //调用track函数建立响应联系
+        track(target, ITERATE_KEY);
+        //通过绑定target自身对象从而修复this指向的问题
+        return Reflect.get(target, key, target);
+      }
+
+      //使用bind函数将用于操作数据的方法与原始的数据对象target做绑定
+      return mutableInstrumentations[key];
+    },
+  });
+}
+// console.log(s.size);
+// p.delete(1);
+//s = [1,2,3]
+// const p = createReactive(s);
+// // console.log(p.size);
+// effect(() => {
+//   console.log(`p的长度为${p.size}`);
+// });
+
+// p.add(5);
+// p.delete(5);
+
+/**
+ * 处理forEach,还是需要重写forEach方法
+ */
+const p = reactive(new Map([[{ key: 1 }, { value: 1 }]]));
+
+effect(() => {
+  p.forEach(function (value, key) {
+    console.log(`key:${key} value:${value}`);
+  });
+});
+
+p.set({ key: 2 }, { value: 2 });
